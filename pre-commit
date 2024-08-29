@@ -2,4 +2,4 @@
 
 echo "Caching SQL query analysis..."
 cargo sqlx prepare
-git add sqlx-data.json
+git add .sqlx
