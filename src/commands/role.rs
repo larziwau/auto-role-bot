@@ -1,0 +1,123 @@
+use super::prelude::*;
+
+#[poise::command(slash_command, subcommands("add", "remove", "removeid", "list"))]
+pub async fn role(_ctx: Context<'_>) -> Result<(), CommandError> {
+    // unreachable
+    Ok(())
+}
+
+async fn has_permission(ctx: Context<'_>) -> bool {
+    ctx.author_member()
+        .await
+        .unwrap()
+        .permissions
+        .is_some_and(|p| p.administrator())
+}
+
+async fn has_permission_view(ctx: Context<'_>) -> bool {
+    ctx.author_member()
+        .await
+        .unwrap()
+        .permissions
+        .is_some_and(|p| p.manage_roles())
+}
+
+#[poise::command(slash_command)]
+pub async fn add(
+    ctx: Context<'_>,
+    #[description = "Role to add"] role: serenity::Role,
+    #[description = "Role ID on the Globed server"] globed_role_id: String,
+) -> Result<(), CommandError> {
+    let state = ctx.data();
+
+    if !has_permission(ctx).await {
+        ctx.reply(":x: No permission").await?;
+        return Ok(());
+    }
+
+    match state.add_role(role.id.get() as i64, &globed_role_id).await {
+        Ok(()) => {
+            ctx.reply(format!(
+                "Successfully linked role <@&{}> to globed role `{}`.",
+                role.id, globed_role_id
+            ))
+            .await?
+        }
+        Err(e) => ctx.reply(format!("Failed to add the role: {e}")).await?,
+    };
+
+    Ok(())
+}
+
+#[poise::command(slash_command)]
+pub async fn remove(
+    ctx: Context<'_>,
+    #[description = "Role to remove"] role: serenity::Role,
+) -> Result<(), CommandError> {
+    let state = ctx.data();
+
+    if !has_permission(ctx).await {
+        ctx.reply(":x: No permission").await?;
+        return Ok(());
+    }
+
+    match state.remove_role(role.id.get() as i64).await {
+        Ok(()) => {
+            ctx.reply(format!("Successfully removed role <@&{}>.", role.id))
+                .await?
+        }
+        Err(e) => ctx.reply(format!("Failed to remove the role: {e}")).await?,
+    };
+
+    Ok(())
+}
+
+#[poise::command(slash_command)]
+pub async fn removeid(
+    ctx: Context<'_>,
+    #[description = "Role to remove"] globed_role_id: String,
+) -> Result<(), CommandError> {
+    let state = ctx.data();
+
+    if !has_permission(ctx).await {
+        ctx.reply(":x: No permission").await?;
+        return Ok(());
+    }
+
+    match state.remove_role_by_globed_id(&globed_role_id).await {
+        Ok(()) => {
+            ctx.reply(format!("Successfully removed role `{}`.", globed_role_id))
+                .await?
+        }
+        Err(e) => ctx.reply(format!("Failed to remove the role: {e}")).await?,
+    };
+
+    Ok(())
+}
+
+#[poise::command(slash_command)]
+pub async fn list(ctx: Context<'_>) -> Result<(), CommandError> {
+    let state = ctx.data();
+
+    if !has_permission_view(ctx).await {
+        ctx.reply(":x: No permission").await?;
+        return Ok(());
+    }
+
+    match state.get_all_roles().await {
+        Ok(roles) => {
+            let mut msg = "List of linked roles on this server:\n\n".to_owned();
+            for role in roles {
+                msg += &format!("<@&{}> - `{}`", role.discord_id, role.id);
+            }
+
+            ctx.reply(msg).await?;
+        }
+        Err(e) => {
+            ctx.reply(format!("Failed to get the list of roles: {e}"))
+                .await?;
+        }
+    };
+
+    Ok(())
+}
