@@ -60,3 +60,19 @@ macro_rules! bail {
 }
 
 pub use bail;
+
+pub async fn has_admin_perm(ctx: crate::Context<'_>) -> bool {
+    ctx.author_member()
+        .await
+        .unwrap()
+        .permissions
+        .is_some_and(|p| p.administrator())
+}
+
+pub async fn has_manage_roles_perm(ctx: crate::Context<'_>) -> bool {
+    ctx.author_member()
+        .await
+        .unwrap()
+        .permissions
+        .is_some_and(|p| p.manage_roles())
+}
