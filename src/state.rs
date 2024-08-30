@@ -1,10 +1,10 @@
 use std::{env, fmt::Display, num::NonZeroI32};
 
-use crate::{db::*, serenity};
+use crate::{db::*, serenity, Context};
 use log::{debug, error, warn};
 use parking_lot::RwLock as SyncRwLock;
 use reqwest::StatusCode;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serenity::all::{GuildId, Member, RoleId, UserId};
 
 pub struct BotState {
@@ -61,6 +61,30 @@ impl Display for RoleSyncError {
     }
 }
 
+pub enum LinkError {
+    AlreadyLinked,
+    InvalidUsername,
+    ServerRequest(reqwest::Error),
+    ServerInternalError(StatusCode, String),
+    UserNotFound,
+    ServerMalformedResponse(serde_json::Error, String),
+    Database(sqlx::Error),
+    RoleSync(RoleSyncError, UserLookupResponse),
+    LinkedToOther(String),
+}
+
+impl From<sqlx::Error> for LinkError {
+    fn from(value: sqlx::Error) -> Self {
+        Self::Database(value)
+    }
+}
+
+#[derive(Deserialize)]
+pub struct UserLookupResponse {
+    pub account_id: i32,
+    pub name: String,
+}
+
 impl BotState {
     pub async fn new(database: sqlx::SqlitePool) -> Self {
         let mut base_url =
@@ -114,6 +138,281 @@ impl BotState {
 
         ret
     }
+
+    /* Methods for linking/unlinking users etc. */
+
+    pub async fn is_linked(&self, user_id: UserId) -> Result<bool, sqlx::Error> {
+        Ok(self.get_linked_gd_account(user_id).await?.is_some())
+    }
+
+    pub async fn get_linked_gd_account(
+        &self,
+        user_id: UserId,
+    ) -> Result<Option<NonZeroI32>, sqlx::Error> {
+        let user_id = user_id.get() as i64;
+
+        let res = sqlx::query_as!(
+            LinkedUser,
+            "SELECT * FROM linked_users WHERE id = ?",
+            user_id
+        )
+        .fetch_one(&self.database)
+        .await;
+
+        match res {
+            Ok(user) => Ok(NonZeroI32::new(user.gd_account_id as i32)),
+            Err(sqlx::Error::RowNotFound) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub async fn get_linked_discord_account(
+        &self,
+        account_id: i32,
+    ) -> Result<Option<UserId>, sqlx::Error> {
+        let account_id = account_id as i64;
+
+        let res = sqlx::query_as!(
+            LinkedUser,
+            "SELECT * FROM linked_users WHERE gd_account_id = ?",
+            account_id
+        )
+        .fetch_one(&self.database)
+        .await;
+
+        match res {
+            Ok(user) => Ok(Some(UserId::new(user.id as u64))),
+            Err(sqlx::Error::RowNotFound) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub async fn link_user(
+        &self,
+        ctx: Context<'_>,
+        member: &Member,
+        gd_username: &str,
+    ) -> Result<UserLookupResponse, LinkError> {
+        if !gd_username.is_ascii() || gd_username.len() > 16 {
+            return Err(LinkError::InvalidUsername);
+        }
+
+        let response = match self
+            .http_client
+            .get(format!(
+                "{}/gsp/lookup?username={}",
+                self.base_url, gd_username
+            ))
+            .header("Authorization", &self.server_password)
+            .send()
+            .await
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                return Err(LinkError::ServerRequest(e));
+            }
+        };
+
+        let status = response.status();
+        if !status.is_success() {
+            if status == StatusCode::NOT_FOUND {
+                return Err(LinkError::UserNotFound);
+            }
+
+            let message = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<no message>".to_owned());
+
+            return Err(LinkError::ServerInternalError(status, message));
+        }
+
+        let json = response.text().await.unwrap_or_default();
+        let response: UserLookupResponse = match serde_json::from_str(&json) {
+            Ok(x) => x,
+            Err(err) => {
+                return Err(LinkError::ServerMalformedResponse(err, json));
+            }
+        };
+
+        let user_id_int = member.user.id.get() as i64;
+
+        // insert into the db
+        match sqlx::query!(
+            "INSERT INTO linked_users (id, gd_account_id) VALUES (?, ?)",
+            user_id_int,
+            response.account_id
+        )
+        .execute(&self.database)
+        .await
+        {
+            Ok(_) => {}
+            Err(sqlx::Error::Database(err)) => {
+                // this is pretty bad but eh
+                if !err.message().contains("UNIQUE constraint failed") {
+                    return Err(LinkError::Database(sqlx::Error::Database(err)));
+                }
+
+                // check if the someone else's discord is alreday linked to this gd account
+                let linked_disc = self.get_linked_discord_account(response.account_id).await?;
+
+                // if linked to someone else than us, tell the user
+                if linked_disc.as_ref().is_some_and(|id| *id != member.user.id) {
+                    let linked_id = linked_disc.unwrap();
+
+                    // try to fetch the member and display their username, else fall back to their user id
+                    let mut ident = String::new();
+
+                    // god i fucking hate async rust
+                    {
+                        if let Some(cached) = ctx.cache().user(linked_id) {
+                            ident.push('@');
+                            ident.push_str(&cached.name);
+                        }
+                    }
+
+                    if ident.is_empty() {
+                        if let Ok(user) = ctx.http().get_user(linked_id).await {
+                            ident.push('@');
+                            ident.push_str(&user.name);
+                        } else {
+                            ident = linked_id.to_string();
+                        }
+                    };
+
+                    return Err(LinkError::LinkedToOther(ident));
+                } else {
+                    // otherwise most likely we are already linked
+                    return Err(LinkError::AlreadyLinked);
+                }
+            }
+            Err(err) => {
+                return Err(LinkError::Database(err));
+            }
+        }
+
+        // sync roles
+        match self.sync_roles(member).await {
+            Ok(()) => Ok(response),
+            Err(e) => Err(LinkError::RoleSync(e, response)),
+        }
+    }
+
+    pub async fn unlink_user(&self, user_id: UserId) -> Result<(), RoleSyncError> {
+        let user_id = user_id.get() as i64;
+
+        // check if the user is linked
+        let linked_user = sqlx::query_as!(
+            LinkedUser,
+            "SELECT * FROM linked_users WHERE id = ?",
+            user_id
+        )
+        .fetch_one(&self.database)
+        .await?;
+
+        // fetch roles from the database
+        let db_roles = sqlx::query_as!(Role, "SELECT * FROM roles")
+            .fetch_all(&self.database)
+            .await?;
+
+        // remove user from the database
+        sqlx::query!("DELETE FROM linked_users WHERE id = ?", user_id)
+            .execute(&self.database)
+            .await?;
+
+        // sync roles with the server
+
+        let mut removed = Vec::new();
+
+        for role in db_roles {
+            removed.push(role.id);
+        }
+
+        let req = RoleSyncRequest {
+            account_id: linked_user.gd_account_id as i32,
+            keep: Vec::new(),
+            remove: removed,
+        };
+
+        self.send_sync_roles_req(&RoleSyncRequestData { users: vec![req] })
+            .await
+    }
+
+    pub async fn get_all_linked_users(&self) -> Result<Vec<LinkedUser>, sqlx::Error> {
+        sqlx::query_as!(LinkedUser, "SELECT * FROM linked_users")
+            .fetch_all(&self.database)
+            .await
+    }
+
+    /* Methods for adding/removing/getting linked roles */
+
+    pub async fn add_role(&self, role_id: i64, globed_role_id: &str) -> Result<(), sqlx::Error> {
+        sqlx::query!(
+            "INSERT INTO roles (id, discord_id) VALUES (?, ?)",
+            globed_role_id,
+            role_id
+        )
+        .execute(&self.database)
+        .await?;
+
+        let id = RoleId::new(role_id as u64);
+
+        let mut watched = self.watched_roles.write();
+        if !watched.contains(&id) {
+            watched.push(id);
+        }
+
+        watched.sort();
+
+        #[cfg(debug_assertions)]
+        debug!("new watched roles: {:?}", *watched);
+
+        Ok(())
+    }
+
+    pub async fn remove_role(&self, role_id: i64) -> Result<(), sqlx::Error> {
+        sqlx::query!("DELETE FROM roles WHERE discord_id = ?", role_id)
+            .execute(&self.database)
+            .await?;
+
+        let id = RoleId::new(role_id as u64);
+
+        let mut watched = self.watched_roles.write();
+        if let Some(pos) = watched.iter().position(|x| *x == id) {
+            watched.remove(pos);
+        }
+
+        #[cfg(debug_assertions)]
+        debug!("new watched roles: {:?}", *watched);
+
+        Ok(())
+    }
+
+    pub async fn remove_role_by_globed_id(&self, role: &str) -> Result<(), sqlx::Error> {
+        let deleted = sqlx::query_as!(Role, "DELETE FROM roles WHERE id = ? RETURNING *", role)
+            .fetch_one(&self.database)
+            .await?;
+
+        let id = RoleId::new(deleted.discord_id as u64);
+
+        let mut watched = self.watched_roles.write();
+        if let Some(pos) = watched.iter().position(|x| *x == id) {
+            watched.remove(pos);
+        }
+
+        #[cfg(debug_assertions)]
+        debug!("new watched roles: {:?}", *watched);
+
+        Ok(())
+    }
+
+    pub async fn get_all_roles(&self) -> Result<Vec<Role>, sqlx::Error> {
+        sqlx::query_as!(Role, "SELECT * FROM roles")
+            .fetch_all(&self.database)
+            .await
+    }
+
+    /* Methods for syncing */
 
     pub async fn sync_roles(&self, user: &Member) -> Result<(), RoleSyncError> {
         let req = self.make_role_sync_request(user).await?;
@@ -182,92 +481,6 @@ impl BotState {
         }
     }
 
-    pub async fn is_linked(&self, user_id: UserId) -> Result<bool, sqlx::Error> {
-        Ok(self.get_linked_gd_account(user_id).await?.is_some())
-    }
-
-    pub async fn get_linked_gd_account(
-        &self,
-        user_id: UserId,
-    ) -> Result<Option<NonZeroI32>, sqlx::Error> {
-        let user_id = user_id.get() as i64;
-
-        let res = sqlx::query_as!(
-            LinkedUser,
-            "SELECT * FROM linked_users WHERE id = ?",
-            user_id
-        )
-        .fetch_one(&self.database)
-        .await;
-
-        match res {
-            Ok(user) => Ok(NonZeroI32::new(user.gd_account_id as i32)),
-            Err(sqlx::Error::RowNotFound) => Ok(None),
-            Err(e) => Err(e),
-        }
-    }
-
-    pub async fn get_linked_discord_account(
-        &self,
-        account_id: i32,
-    ) -> Result<Option<UserId>, sqlx::Error> {
-        let account_id = account_id as i64;
-
-        let res = sqlx::query_as!(
-            LinkedUser,
-            "SELECT * FROM linked_users WHERE gd_account_id = ?",
-            account_id
-        )
-        .fetch_one(&self.database)
-        .await;
-
-        match res {
-            Ok(user) => Ok(Some(UserId::new(user.id as u64))),
-            Err(sqlx::Error::RowNotFound) => Ok(None),
-            Err(e) => Err(e),
-        }
-    }
-
-    pub async fn handle_unlink(&self, user_id: UserId) -> Result<(), RoleSyncError> {
-        let user_id = user_id.get() as i64;
-
-        // check if the user is linked
-        let linked_user = sqlx::query_as!(
-            LinkedUser,
-            "SELECT * FROM linked_users WHERE id = ?",
-            user_id
-        )
-        .fetch_one(&self.database)
-        .await?;
-
-        // fetch roles from the database
-        let db_roles = sqlx::query_as!(Role, "SELECT * FROM roles")
-            .fetch_all(&self.database)
-            .await?;
-
-        // remove user from the database
-        sqlx::query!("DELETE FROM linked_users WHERE id = ?", user_id)
-            .execute(&self.database)
-            .await?;
-
-        // sync roles with the server
-
-        let mut removed = Vec::new();
-
-        for role in db_roles {
-            removed.push(role.id);
-        }
-
-        let req = RoleSyncRequest {
-            account_id: linked_user.gd_account_id as i32,
-            keep: Vec::new(),
-            remove: removed,
-        };
-
-        self.send_sync_roles_req(&RoleSyncRequestData { users: vec![req] })
-            .await
-    }
-
     // internal function for making server web request to sync roles
     pub async fn send_sync_roles_req(
         &self,
@@ -319,76 +532,5 @@ impl BotState {
 
         // success!
         Ok(())
-    }
-
-    pub async fn add_role(&self, role_id: i64, globed_role_id: &str) -> Result<(), sqlx::Error> {
-        sqlx::query!(
-            "INSERT INTO roles (id, discord_id) VALUES (?, ?)",
-            globed_role_id,
-            role_id
-        )
-        .execute(&self.database)
-        .await?;
-
-        let id = RoleId::new(role_id as u64);
-
-        let mut watched = self.watched_roles.write();
-        if !watched.contains(&id) {
-            watched.push(id);
-        }
-
-        watched.sort();
-
-        #[cfg(debug_assertions)]
-        debug!("new watched roles: {:?}", *watched);
-
-        Ok(())
-    }
-
-    pub async fn remove_role(&self, role_id: i64) -> Result<(), sqlx::Error> {
-        sqlx::query!("DELETE FROM roles WHERE discord_id = ?", role_id)
-            .execute(&self.database)
-            .await?;
-
-        let id = RoleId::new(role_id as u64);
-
-        let mut watched = self.watched_roles.write();
-        if let Some(pos) = watched.iter().position(|x| *x == id) {
-            watched.remove(pos);
-        }
-
-        #[cfg(debug_assertions)]
-        debug!("new watched roles: {:?}", *watched);
-
-        Ok(())
-    }
-
-    pub async fn remove_role_by_globed_id(&self, role: &str) -> Result<(), sqlx::Error> {
-        let deleted = sqlx::query_as!(Role, "DELETE FROM roles WHERE id = ? RETURNING *", role)
-            .fetch_one(&self.database)
-            .await?;
-
-        let id = RoleId::new(deleted.discord_id as u64);
-
-        let mut watched = self.watched_roles.write();
-        if let Some(pos) = watched.iter().position(|x| *x == id) {
-            watched.remove(pos);
-        }
-
-        #[cfg(debug_assertions)]
-        debug!("new watched roles: {:?}", *watched);
-
-        Ok(())
-    }
-
-    pub async fn get_all_roles(&self) -> Result<Vec<Role>, sqlx::Error> {
-        sqlx::query_as!(Role, "SELECT * FROM roles")
-            .fetch_all(&self.database)
-            .await
-    }
-    pub async fn get_all_linked_users(&self) -> Result<Vec<LinkedUser>, sqlx::Error> {
-        sqlx::query_as!(LinkedUser, "SELECT * FROM linked_users")
-            .fetch_all(&self.database)
-            .await
     }
 }

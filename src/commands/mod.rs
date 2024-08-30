@@ -1,13 +1,17 @@
+use crate::serenity;
 use std::{borrow::Cow, fmt::Display};
 
 pub mod prelude;
 
+mod admin;
 mod link;
 mod role;
 mod sync;
 mod unlink;
 
+pub use admin::admin;
 pub use link::*;
+use poise::CreateReply;
 pub use role::role;
 pub use sync::*;
 pub use unlink::*;
@@ -75,4 +79,12 @@ pub async fn has_manage_roles_perm(ctx: crate::Context<'_>) -> bool {
         .unwrap()
         .permissions
         .is_some_and(|p| p.manage_roles())
+}
+
+pub async fn reply_ephemeral(
+    ctx: crate::Context<'_>,
+    content: impl Into<String>,
+) -> Result<poise::ReplyHandle<'_>, serenity::Error> {
+    ctx.send(CreateReply::default().content(content).ephemeral(true))
+        .await
 }

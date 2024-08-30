@@ -77,7 +77,7 @@ async fn event_handler(
             member_data_if_available: _member,
         } => {
             // if a user left, unlink and remove them
-            match state.handle_unlink(user.id).await {
+            match state.unlink_user(user.id).await {
                 Ok(()) | Err(RoleSyncError::NotLinked) => {}
                 Err(err) => {
                     return Err(CommandError::other(format!(
@@ -142,6 +142,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let options = poise::FrameworkOptions {
         commands: vec![
+            commands::admin(),
             commands::link(),
             commands::unlink(),
             commands::role(),
