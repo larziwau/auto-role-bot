@@ -1,5 +1,6 @@
 use super::prelude::*;
 
+/// Unlink your Discord account from your GD account
 #[poise::command(slash_command, guild_only = true)]
 pub async fn unlink(ctx: Context<'_>) -> Result<(), CommandError> {
     let state = ctx.data();

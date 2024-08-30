@@ -1,5 +1,6 @@
 use super::prelude::*;
 
+/// Sync your discord roles with your GD account on Globed
 #[poise::command(slash_command, guild_only = true)]
 pub async fn sync(ctx: Context<'_>) -> Result<(), CommandError> {
     let state = ctx.data();

@@ -8,6 +8,7 @@ pub async fn admin(_ctx: Context<'_>) -> Result<(), CommandError> {
     Ok(())
 }
 
+/// Link another user to their GD account
 #[poise::command(slash_command)]
 pub async fn link(
     ctx: Context<'_>,
@@ -103,6 +104,7 @@ pub async fn link(
     }
 }
 
+/// Unlink another user from their GD account
 #[poise::command(slash_command)]
 pub async fn unlink(
     ctx: Context<'_>,
@@ -134,6 +136,7 @@ pub async fn unlink(
     Ok(())
 }
 
+/// Sync another user's roles to their GD account on Globed
 #[poise::command(slash_command)]
 pub async fn sync(
     ctx: Context<'_>,

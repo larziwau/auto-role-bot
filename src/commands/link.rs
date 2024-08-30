@@ -2,6 +2,7 @@ use crate::state::LinkError;
 
 use super::prelude::*;
 
+/// Link your Discord account to your GD account, to get roles on Globed
 #[poise::command(slash_command, guild_only = true)]
 pub async fn link(
     ctx: Context<'_>,

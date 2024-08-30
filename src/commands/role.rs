@@ -6,6 +6,7 @@ pub async fn role(_ctx: Context<'_>) -> Result<(), CommandError> {
     Ok(())
 }
 
+/// Add a new linked role
 #[poise::command(slash_command)]
 pub async fn add(
     ctx: Context<'_>,
@@ -33,6 +34,7 @@ pub async fn add(
     Ok(())
 }
 
+/// Remove a linked role
 #[poise::command(slash_command)]
 pub async fn remove(
     ctx: Context<'_>,
@@ -56,6 +58,7 @@ pub async fn remove(
     Ok(())
 }
 
+/// Remove a linked role by Globed ID
 #[poise::command(slash_command)]
 pub async fn removeid(
     ctx: Context<'_>,
@@ -79,6 +82,7 @@ pub async fn removeid(
     Ok(())
 }
 
+/// List all linked roles
 #[poise::command(slash_command)]
 pub async fn list(ctx: Context<'_>) -> Result<(), CommandError> {
     let state = ctx.data();
