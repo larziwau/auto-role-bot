@@ -11,7 +11,7 @@ mod state;
 
 use commands::CommandError;
 use logger::*;
-use state::BotState;
+use state::{BotState, RoleSyncError};
 
 pub type Context<'a> = poise::Context<'a, BotState, CommandError>;
 
@@ -27,6 +27,70 @@ async fn on_error(error: poise::FrameworkError<'_, BotState, CommandError>) {
             }
         }
     }
+}
+
+async fn event_handler(
+    _ctx: &serenity::Context,
+    event: &serenity::FullEvent,
+    _framework: poise::FrameworkContext<'_, BotState, CommandError>,
+    state: &BotState,
+) -> Result<(), CommandError> {
+    match event {
+        serenity::FullEvent::GuildMemberUpdate {
+            old_if_available,
+            new: Some(new),
+            event: _event,
+        } => {
+            // check for the roles
+            let mut should_sync = false;
+            {
+                let watched = state.watched_roles.read();
+
+                if let Some(old_user) = old_if_available {
+                    // iterate over all watched roles, see if anything changed
+                    for role in &*watched {
+                        if new.roles.contains(role) != old_user.roles.contains(role) {
+                            should_sync = true;
+                            break;
+                        }
+                    }
+                } else {
+                    should_sync = true;
+                }
+            }
+
+            if should_sync {
+                match state.sync_roles(new).await {
+                    Ok(()) | Err(RoleSyncError::NotLinked) => {}
+                    Err(err) => {
+                        return Err(CommandError::other(format!(
+                            "Failed to auto sync user roles: {err}"
+                        )));
+                    }
+                }
+            }
+        }
+
+        serenity::FullEvent::GuildMemberRemoval {
+            guild_id: _guild_id,
+            user,
+            member_data_if_available: _member,
+        } => {
+            // if a user left, unlink and remove them
+            match state.handle_unlink(user.id).await {
+                Ok(()) | Err(RoleSyncError::NotLinked) => {}
+                Err(err) => {
+                    return Err(CommandError::other(format!(
+                        "Failed to unlink user that left the guild: {err}"
+                    )));
+                }
+            }
+        }
+
+        _ => {}
+    }
+
+    Ok(())
 }
 
 #[tokio::main]
@@ -74,7 +138,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // start the discord bot
-    let state = BotState::new(db);
+    let state = BotState::new(db).await;
 
     let options = poise::FrameworkOptions {
         commands: vec![
@@ -94,6 +158,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(true)
             })
         }),
+
+        event_handler: |ctx, event, framework, data| {
+            Box::pin(event_handler(ctx, event, framework, data))
+        },
         ..Default::default()
     };
 
@@ -114,9 +182,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .options(options)
         .build();
 
-    let client = serenity::ClientBuilder::new(token, GatewayIntents::empty())
-        .framework(framework)
-        .await;
+    let client = serenity::ClientBuilder::new(
+        token,
+        GatewayIntents::non_privileged() | GatewayIntents::GUILD_MEMBERS,
+    )
+    .framework(framework)
+    .await;
 
     client.unwrap().start().await.unwrap();
 

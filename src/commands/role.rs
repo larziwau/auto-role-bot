@@ -92,7 +92,7 @@ pub async fn list(ctx: Context<'_>) -> Result<(), CommandError> {
         Ok(roles) => {
             let mut msg = "List of linked roles on this server:\n\n".to_owned();
             for role in roles {
-                msg += &format!("<@&{}> - `{}`", role.discord_id, role.id);
+                msg += &format!("* <@&{}> - `{}`\n", role.discord_id, role.id);
             }
 
             ctx.reply(msg).await?;

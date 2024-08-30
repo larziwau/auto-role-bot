@@ -102,8 +102,44 @@ pub async fn link(
 
         Err(sqlx::Error::Database(err)) => {
             if err.message().contains("UNIQUE constraint failed") {
-                ctx.reply(":x: Already linked. Use the `/unlink` command to unlink your account.")
+                // check if the someone else's discord is alreday linked to this gd account
+                let linked_disc = match state.get_linked_discord_account(response.account_id).await
+                {
+                    Ok(x) => x,
+                    Err(e) => {
+                        ctx.reply(":x: Unknown database error has occurred.")
+                            .await?;
+                        bail!("database error: {e}");
+                    }
+                };
+
+                // if linked to someone else than us, tell the user
+                if linked_disc
+                    .as_ref()
+                    .is_some_and(|id| *id != ctx.author().id)
+                {
+                    let linked_id = linked_disc.unwrap();
+
+                    // try to fetch the member and display their username, else fall back to their user id
+                    let ident = ctx.cache().user(linked_id).map_or_else(
+                        || linked_id.to_string(),
+                        |x| {
+                            let mut str = String::new();
+                            str.push('@');
+                            str.push_str(&x.name);
+                            str
+                        },
+                    );
+
+                    ctx.reply(format!(":x: This Geometry Dash account is already linked to another Discord account ({}). If this is not you, please contact the moderator team.", ident))
                     .await?;
+                } else {
+                    // otherwise most likely we are already linked
+                    ctx.reply(
+                        ":x: Already linked. Use the `/unlink` command to unlink your account.",
+                    )
+                    .await?;
+                }
                 return Ok(());
             } else {
                 ctx.reply(":x: Unknown database error has occurred.")

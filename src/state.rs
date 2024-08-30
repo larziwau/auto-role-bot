@@ -1,10 +1,11 @@
-use std::{env, fmt::Display};
+use std::{env, fmt::Display, num::NonZeroI32};
 
 use crate::{db::*, serenity};
 use log::{debug, error, warn};
+use parking_lot::RwLock as SyncRwLock;
 use reqwest::StatusCode;
 use serde::Serialize;
-use serenity::all::{GuildId, Member};
+use serenity::all::{GuildId, Member, RoleId, UserId};
 
 pub struct BotState {
     pub http_client: reqwest::Client,
@@ -12,6 +13,8 @@ pub struct BotState {
     pub server_password: String,
     pub database: sqlx::SqlitePool,
     pub guild_id: GuildId,
+
+    pub watched_roles: SyncRwLock<Vec<RoleId>>,
 }
 
 #[derive(Serialize)]
@@ -54,7 +57,7 @@ impl Display for RoleSyncError {
 }
 
 impl BotState {
-    pub fn new(database: sqlx::SqlitePool) -> Self {
+    pub async fn new(database: sqlx::SqlitePool) -> Self {
         let mut base_url =
             env::var("BOT_BASE_URL").expect("'BOT_BASE_URL' env variable not passed");
         if base_url.ends_with('/') {
@@ -71,7 +74,9 @@ impl BotState {
                 .expect("BOT_SERVER_ID must be an integer"),
         );
 
-        Self {
+        // fetch roles
+
+        let ret = Self {
             http_client: reqwest::Client::builder()
                 .user_agent(format!(
                     "globed-game-server/discord-bot-{}",
@@ -83,7 +88,26 @@ impl BotState {
             server_password,
             database,
             guild_id,
+            watched_roles: SyncRwLock::new(Vec::new()),
+        };
+
+        // get all roles from the database and push them to a vec
+        let roles = ret
+            .get_all_roles()
+            .await
+            .expect("Failed to fetch roles from the database");
+
+        let mut watched = ret.watched_roles.write();
+        for role in roles {
+            watched.push(RoleId::new(role.discord_id as u64));
         }
+
+        #[cfg(debug_assertions)]
+        debug!("new watched roles: {:?}", *watched);
+
+        drop(watched);
+
+        ret
     }
 
     pub async fn sync_roles(&self, user: &Member) -> Result<(), RoleSyncError> {
@@ -136,8 +160,54 @@ impl BotState {
         self._send_sync_roles_req(&data).await
     }
 
-    pub async fn handle_unlink(&self, user: &Member) -> Result<(), RoleSyncError> {
-        let user_id = user.user.id.get() as i64;
+    pub async fn is_linked(&self, user_id: UserId) -> Result<bool, sqlx::Error> {
+        Ok(self.get_linked_gd_account(user_id).await?.is_some())
+    }
+
+    pub async fn get_linked_gd_account(
+        &self,
+        user_id: UserId,
+    ) -> Result<Option<NonZeroI32>, sqlx::Error> {
+        let user_id = user_id.get() as i64;
+
+        let res = sqlx::query_as!(
+            LinkedUser,
+            "SELECT * FROM linked_users WHERE id = ?",
+            user_id
+        )
+        .fetch_one(&self.database)
+        .await;
+
+        match res {
+            Ok(user) => Ok(NonZeroI32::new(user.gd_account_id as i32)),
+            Err(sqlx::Error::RowNotFound) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub async fn get_linked_discord_account(
+        &self,
+        account_id: i32,
+    ) -> Result<Option<UserId>, sqlx::Error> {
+        let account_id = account_id as i64;
+
+        let res = sqlx::query_as!(
+            LinkedUser,
+            "SELECT * FROM linked_users WHERE gd_account_id = ?",
+            account_id
+        )
+        .fetch_one(&self.database)
+        .await;
+
+        match res {
+            Ok(user) => Ok(Some(UserId::new(user.id as u64))),
+            Err(sqlx::Error::RowNotFound) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub async fn handle_unlink(&self, user_id: UserId) -> Result<(), RoleSyncError> {
+        let user_id = user_id.get() as i64;
 
         // check if the user is linked
         let linked_user = sqlx::query_as!(
@@ -232,22 +302,57 @@ impl BotState {
             role_id
         )
         .execute(&self.database)
-        .await
-        .map(|_| ())
+        .await?;
+
+        let id = RoleId::new(role_id as u64);
+
+        let mut watched = self.watched_roles.write();
+        if !watched.contains(&id) {
+            watched.push(id);
+        }
+
+        watched.sort();
+
+        #[cfg(debug_assertions)]
+        debug!("new watched roles: {:?}", *watched);
+
+        Ok(())
     }
 
     pub async fn remove_role(&self, role_id: i64) -> Result<(), sqlx::Error> {
         sqlx::query!("DELETE FROM roles WHERE discord_id = ?", role_id)
             .execute(&self.database)
-            .await
-            .map(|_| ())
+            .await?;
+
+        let id = RoleId::new(role_id as u64);
+
+        let mut watched = self.watched_roles.write();
+        if let Some(pos) = watched.iter().position(|x| *x == id) {
+            watched.remove(pos);
+        }
+
+        #[cfg(debug_assertions)]
+        debug!("new watched roles: {:?}", *watched);
+
+        Ok(())
     }
 
     pub async fn remove_role_by_globed_id(&self, role: &str) -> Result<(), sqlx::Error> {
-        sqlx::query!("DELETE FROM roles WHERE id = ?", role)
-            .execute(&self.database)
-            .await
-            .map(|_| ())
+        let deleted = sqlx::query_as!(Role, "DELETE FROM roles WHERE id = ? RETURNING *", role)
+            .fetch_one(&self.database)
+            .await?;
+
+        let id = RoleId::new(deleted.discord_id as u64);
+
+        let mut watched = self.watched_roles.write();
+        if let Some(pos) = watched.iter().position(|x| *x == id) {
+            watched.remove(pos);
+        }
+
+        #[cfg(debug_assertions)]
+        debug!("new watched roles: {:?}", *watched);
+
+        Ok(())
     }
 
     pub async fn get_all_roles(&self) -> Result<Vec<Role>, sqlx::Error> {
