@@ -121,15 +121,24 @@ pub async fn link(
                     let linked_id = linked_disc.unwrap();
 
                     // try to fetch the member and display their username, else fall back to their user id
-                    let ident = ctx.cache().user(linked_id).map_or_else(
-                        || linked_id.to_string(),
-                        |x| {
-                            let mut str = String::new();
-                            str.push('@');
-                            str.push_str(&x.name);
-                            str
-                        },
-                    );
+                    let mut ident = String::new();
+
+                    // god i fucking hate async rust
+                    {
+                        if let Some(cached) = ctx.cache().user(linked_id) {
+                            ident.push('@');
+                            ident.push_str(&cached.name);
+                        }
+                    }
+
+                    if ident.is_empty() {
+                        if let Ok(user) = ctx.http().get_user(linked_id).await {
+                            ident.push('@');
+                            ident.push_str(&user.name);
+                        } else {
+                            ident = linked_id.to_string();
+                        }
+                    };
 
                     ctx.reply(format!(":x: This Geometry Dash account is already linked to another Discord account ({}). If this is not you, please contact the moderator team.", ident))
                     .await?;
