@@ -18,10 +18,15 @@ pub struct BotState {
 }
 
 #[derive(Serialize)]
-struct RoleSyncRequestData {
+pub struct RoleSyncRequest {
     pub account_id: i32,
     pub keep: Vec<String>,
     pub remove: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct RoleSyncRequestData {
+    pub users: Vec<RoleSyncRequest>,
 }
 
 pub enum RoleSyncError {
@@ -111,6 +116,16 @@ impl BotState {
     }
 
     pub async fn sync_roles(&self, user: &Member) -> Result<(), RoleSyncError> {
+        let req = self.make_role_sync_request(user).await?;
+
+        self.send_sync_roles_req(&RoleSyncRequestData { users: vec![req] })
+            .await
+    }
+
+    pub async fn make_role_sync_request(
+        &self,
+        user: &Member,
+    ) -> Result<RoleSyncRequest, RoleSyncError> {
         let user_id = user.user.id.get() as i64;
 
         // check if the user is linked
@@ -125,11 +140,20 @@ impl BotState {
         // fetch roles from the database
         let db_roles = self.get_all_roles().await?;
 
+        Ok(self.make_role_sync_request_with(user, &linked_user, &db_roles))
+    }
+
+    pub fn make_role_sync_request_with(
+        &self,
+        user: &Member,
+        linked_user: &LinkedUser,
+        all_roles: &[Role],
+    ) -> RoleSyncRequest {
         // depending on which roles the user has, make a vec of roles that should be kept, and roles that should be removed
         let mut kept = Vec::new();
         let mut removed = Vec::new();
 
-        for role in db_roles {
+        for role in all_roles {
             // check if user has that role on discord
             if user
                 .roles
@@ -137,10 +161,10 @@ impl BotState {
                 .any(|id| id.get() as i64 == role.discord_id)
             {
                 // add to list of roles to be kept
-                kept.push(role.id);
+                kept.push(role.id.clone());
             } else {
                 // add to list of roles to be removed
-                removed.push(role.id);
+                removed.push(role.id.clone());
             }
         }
 
@@ -151,13 +175,11 @@ impl BotState {
         );
 
         /* make a request to update the roles on the central server */
-        let data = RoleSyncRequestData {
+        RoleSyncRequest {
             account_id: linked_user.gd_account_id as i32,
             keep: kept,
             remove: removed,
-        };
-
-        self._send_sync_roles_req(&data).await
+        }
     }
 
     pub async fn is_linked(&self, user_id: UserId) -> Result<bool, sqlx::Error> {
@@ -236,18 +258,22 @@ impl BotState {
             removed.push(role.id);
         }
 
-        let data = RoleSyncRequestData {
+        let req = RoleSyncRequest {
             account_id: linked_user.gd_account_id as i32,
             keep: Vec::new(),
             remove: removed,
         };
 
-        self._send_sync_roles_req(&data).await
+        self.send_sync_roles_req(&RoleSyncRequestData { users: vec![req] })
+            .await
     }
 
     // internal function for making server web request to sync roles
-    async fn _send_sync_roles_req(&self, data: &RoleSyncRequestData) -> Result<(), RoleSyncError> {
-        let body = match serde_json::to_string(data) {
+    pub async fn send_sync_roles_req(
+        &self,
+        data: &RoleSyncRequestData,
+    ) -> Result<(), RoleSyncError> {
+        let body: String = match serde_json::to_string(data) {
             Ok(x) => x,
             Err(err) => {
                 error!("This should never fail: {err}");
@@ -357,6 +383,11 @@ impl BotState {
 
     pub async fn get_all_roles(&self) -> Result<Vec<Role>, sqlx::Error> {
         sqlx::query_as!(Role, "SELECT * FROM roles")
+            .fetch_all(&self.database)
+            .await
+    }
+    pub async fn get_all_linked_users(&self) -> Result<Vec<LinkedUser>, sqlx::Error> {
+        sqlx::query_as!(LinkedUser, "SELECT * FROM linked_users")
             .fetch_all(&self.database)
             .await
     }

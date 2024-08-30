@@ -11,7 +11,7 @@ mod state;
 
 use commands::CommandError;
 use logger::*;
-use state::{BotState, RoleSyncError};
+use state::{BotState, RoleSyncError, RoleSyncRequestData};
 
 pub type Context<'a> = poise::Context<'a, BotState, CommandError>;
 
@@ -169,12 +169,90 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .setup(move |ctx, ready, framework| {
             Box::pin(async move {
                 info!("Logged in as {}", ready.user.name);
+
+                // register commands
                 poise::builtins::register_in_guild(
                     ctx,
                     &framework.options().commands,
                     state.guild_id,
                 )
                 .await?;
+
+                info!("Attempting to sync all members.. (this may take some time)");
+
+                // get all linked users
+                let linked_users = state
+                    .get_all_linked_users()
+                    .await
+                    .expect("Failed to read the database");
+
+                // get all linked roles
+                let linked_roles = state
+                    .get_all_roles()
+                    .await
+                    .expect("Failed to read the database");
+
+                let mut sync_data = RoleSyncRequestData {
+                    users: Vec::with_capacity(linked_users.len()),
+                };
+
+                // for fastest lookup, put all ids of linked users into a vec and sort it, so binary search can be applied later
+                let mut linked_ids: Vec<u64> = linked_users.iter().map(|x| x.id as u64).collect();
+                linked_ids.sort();
+
+                // Perform quite a massive scan
+
+                let mut after = None;
+
+                loop {
+                    let members = match ctx
+                        .http()
+                        .get_guild_members(state.guild_id, None, after)
+                        .await
+                    {
+                        Ok(x) => x,
+                        Err(err) => {
+                            warn!("Failed to fetch guild members: {err}");
+                            break;
+                        }
+                    };
+
+                    if members.is_empty() {
+                        break;
+                    }
+
+                    after = Some(members.last().unwrap().user.id.get());
+
+                    // iterate over this member chunk, if any of them are linked, add them to sync list
+                    for member in members {
+                        let member_id = member.user.id.get();
+                        if linked_ids.binary_search(&member_id).is_ok() {
+                            let req = state.make_role_sync_request_with(
+                                &member,
+                                linked_users
+                                    .iter()
+                                    .find(|x| x.id == member_id as i64)
+                                    .unwrap(), // unwrap should be safe
+                                &linked_roles,
+                            );
+
+                            sync_data.users.push(req);
+                        }
+                    }
+                }
+
+                // send a mass sync request!
+                match state.send_sync_roles_req(&sync_data).await {
+                    Ok(()) => {
+                        info!(
+                            "Sync finished! Total {} users synced.",
+                            sync_data.users.len()
+                        );
+                    }
+                    Err(e) => {
+                        warn!("Failed to sync roles of members: {e}");
+                    }
+                }
 
                 Ok(state)
             })
