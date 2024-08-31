@@ -61,6 +61,20 @@ impl Display for RoleSyncError {
     }
 }
 
+pub enum RoleRemoveError {
+    Database(sqlx::Error),
+    NotFound,
+}
+
+impl From<sqlx::Error> for RoleRemoveError {
+    fn from(value: sqlx::Error) -> Self {
+        match value {
+            sqlx::Error::RowNotFound => Self::NotFound,
+            e => Self::Database(e),
+        }
+    }
+}
+
 pub enum LinkError {
     AlreadyLinked,
     InvalidUsername,
@@ -370,10 +384,15 @@ impl BotState {
         Ok(())
     }
 
-    pub async fn remove_role(&self, role_id: i64) -> Result<(), sqlx::Error> {
-        sqlx::query!("DELETE FROM roles WHERE discord_id = ?", role_id)
+    pub async fn remove_role(&self, role_id: i64) -> Result<(), RoleRemoveError> {
+        let affected = sqlx::query!("DELETE FROM roles WHERE discord_id = ?", role_id)
             .execute(&self.database)
-            .await?;
+            .await?
+            .rows_affected();
+
+        if affected == 0 {
+            return Err(RoleRemoveError::NotFound);
+        }
 
         let id = RoleId::new(role_id as u64);
 
@@ -388,7 +407,7 @@ impl BotState {
         Ok(())
     }
 
-    pub async fn remove_role_by_globed_id(&self, role: &str) -> Result<(), sqlx::Error> {
+    pub async fn remove_role_by_globed_id(&self, role: &str) -> Result<(), RoleRemoveError> {
         let deleted = sqlx::query_as!(Role, "DELETE FROM roles WHERE id = ? RETURNING *", role)
             .fetch_one(&self.database)
             .await?;

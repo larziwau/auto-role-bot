@@ -12,6 +12,8 @@ pub async fn link(
 
     let member = ctx.author_member().await.unwrap();
 
+    ctx.defer_ephemeral().await?;
+
     match state.link_user(&ctx, &member, &username).await {
         Ok(user) => {
             ctx.reply(format!(

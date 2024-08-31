@@ -22,6 +22,8 @@ pub async fn link(
         return Ok(());
     }
 
+    ctx.defer_ephemeral().await?;
+
     match state.link_user(&ctx, &member, &name).await {
         Ok(user) => {
             ctx.reply(format!(
@@ -117,6 +119,8 @@ pub async fn unlink(
         return Ok(());
     }
 
+    ctx.defer_ephemeral().await?;
+
     match state.unlink_user(user.id).await {
         Ok(()) => {
             ctx.reply("Successfully unlinked the user's account!")
@@ -149,6 +153,8 @@ pub async fn sync(
         return Ok(());
     }
 
+    ctx.defer_ephemeral().await?;
+
     match state.sync_roles(&user).await {
         Ok(()) => {
             ctx.reply(format!("✅ Successfully synced @{}'s roles! If they were already online on Globed, they might need to reconnect to the server to see the changes.", user.user.name)).await?;
@@ -178,6 +184,8 @@ pub async fn syncall(ctx: Context<'_>) -> Result<(), CommandError> {
         ctx.reply(":x: No permission").await?;
         return Ok(());
     }
+
+    ctx.defer().await?;
 
     match state.sync_all_members(ctx.http()).await {
         Ok(count) => {

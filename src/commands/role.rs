@@ -23,12 +23,15 @@ pub async fn add(
     match state.add_role(role.id.get() as i64, &globed_role_id).await {
         Ok(()) => {
             ctx.reply(format!(
-                "Successfully linked role <@&{}> to globed role `{}`.",
+                "✅ Successfully linked role <@&{}> to globed role `{}`.",
                 role.id, globed_role_id
             ))
             .await?
         }
-        Err(e) => ctx.reply(format!("Failed to add the role: {e}")).await?,
+        Err(e) => {
+            ctx.reply(format!(":x: Failed to add the role: {e}"))
+                .await?
+        }
     };
 
     Ok(())
@@ -49,10 +52,19 @@ pub async fn remove(
 
     match state.remove_role(role.id.get() as i64).await {
         Ok(()) => {
-            ctx.reply(format!("Successfully removed role <@&{}>.", role.id))
-                .await?
+            ctx.reply(format!("S✅ uccessfully removed role <@&{}>.", role.id))
+                .await?;
         }
-        Err(e) => ctx.reply(format!("Failed to remove the role: {e}")).await?,
+        Err(RoleRemoveError::Database(e)) => {
+            ctx.reply(format!(":x: Failed to remove the role: {e}"))
+                .await?;
+            bail!("Role removal failed: {e}");
+        }
+
+        Err(RoleRemoveError::NotFound) => {
+            ctx.reply(":x: Role is not currently linked to any role on Globed.")
+                .await?;
+        }
     };
 
     Ok(())
@@ -73,10 +85,23 @@ pub async fn removeid(
 
     match state.remove_role_by_globed_id(&globed_role_id).await {
         Ok(()) => {
-            ctx.reply(format!("Successfully removed role `{}`.", globed_role_id))
-                .await?
+            ctx.reply(format!(
+                "✅ Successfully removed role `{}`.",
+                globed_role_id
+            ))
+            .await?;
         }
-        Err(e) => ctx.reply(format!("Failed to remove the role: {e}")).await?,
+
+        Err(RoleRemoveError::Database(e)) => {
+            ctx.reply(format!(":x: Failed to remove the role: {e}"))
+                .await?;
+            bail!("Role removal failed: {e}");
+        }
+
+        Err(RoleRemoveError::NotFound) => {
+            ctx.reply(":x: Role is not currently linked to any role on Globed.")
+                .await?;
+        }
     };
 
     Ok(())
@@ -102,7 +127,7 @@ pub async fn list(ctx: Context<'_>) -> Result<(), CommandError> {
             ctx.reply(msg).await?;
         }
         Err(e) => {
-            ctx.reply(format!("Failed to get the list of roles: {e}"))
+            ctx.reply(format!(":x: Failed to get the list of roles: {e}"))
                 .await?;
         }
     };

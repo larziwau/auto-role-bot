@@ -6,6 +6,6 @@ pub use super::{bail, has_admin_perm, has_manage_roles_perm, reply_ephemeral, Co
 pub use crate::{
     logger::*,
     serenity,
-    state::{BotState, RoleSyncError},
+    state::{BotState, RoleRemoveError, RoleSyncError, RoleSyncRequest, RoleSyncRequestData},
     Context,
 };

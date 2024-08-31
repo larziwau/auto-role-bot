@@ -6,6 +6,8 @@ pub async fn unlink(ctx: Context<'_>) -> Result<(), CommandError> {
     let state = ctx.data();
     let member = ctx.author_member().await.unwrap();
 
+    ctx.defer_ephemeral().await?;
+
     match state.unlink_user(member.user.id).await {
         Ok(()) => {
             ctx.reply("Successfully unlinked the account!").await?;
