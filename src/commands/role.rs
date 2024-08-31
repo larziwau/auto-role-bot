@@ -15,7 +15,7 @@ pub async fn add(
 ) -> Result<(), CommandError> {
     let state = ctx.data();
 
-    if !has_admin_perm(ctx).await {
+    if !has_admin_perm(&ctx).await {
         ctx.reply(":x: No permission").await?;
         return Ok(());
     }
@@ -42,7 +42,7 @@ pub async fn remove(
 ) -> Result<(), CommandError> {
     let state = ctx.data();
 
-    if !has_admin_perm(ctx).await {
+    if !has_admin_perm(&ctx).await {
         ctx.reply(":x: No permission").await?;
         return Ok(());
     }
@@ -66,7 +66,7 @@ pub async fn removeid(
 ) -> Result<(), CommandError> {
     let state = ctx.data();
 
-    if !has_admin_perm(ctx).await {
+    if !has_admin_perm(&ctx).await {
         ctx.reply(":x: No permission").await?;
         return Ok(());
     }
@@ -87,7 +87,7 @@ pub async fn removeid(
 pub async fn list(ctx: Context<'_>) -> Result<(), CommandError> {
     let state = ctx.data();
 
-    if !has_manage_roles_perm(ctx).await {
+    if !has_manage_roles_perm(&ctx).await {
         ctx.reply(":x: No permission").await?;
         return Ok(());
     }

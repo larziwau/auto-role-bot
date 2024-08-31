@@ -189,7 +189,7 @@ impl BotState {
 
     pub async fn link_user(
         &self,
-        ctx: Context<'_>,
+        ctx: &Context<'_>,
         member: &Member,
         gd_username: &str,
     ) -> Result<UserLookupResponse, LinkError> {
@@ -419,6 +419,70 @@ impl BotState {
 
         self.send_sync_roles_req(&RoleSyncRequestData { users: vec![req] })
             .await
+    }
+
+    pub async fn sync_all_members(&self, http: &serenity::Http) -> Result<usize, RoleSyncError> {
+        // get all linked users
+        let linked_users = self
+            .get_all_linked_users()
+            .await
+            .expect("Failed to read the database");
+
+        // get all linked roles
+        let linked_roles = self
+            .get_all_roles()
+            .await
+            .expect("Failed to read the database");
+
+        let mut sync_data = RoleSyncRequestData {
+            users: Vec::with_capacity(linked_users.len()),
+        };
+
+        // for fastest lookup, put all ids of linked users into a vec and sort it, so binary search can be applied later
+        let mut linked_ids: Vec<u64> = linked_users.iter().map(|x| x.id as u64).collect();
+        linked_ids.sort();
+
+        // Perform quite a massive scan
+
+        let mut after = None;
+
+        loop {
+            let members = match http.get_guild_members(self.guild_id, None, after).await {
+                Ok(x) => x,
+                Err(err) => {
+                    warn!("Failed to fetch guild members: {err}");
+                    break;
+                }
+            };
+
+            if members.is_empty() {
+                break;
+            }
+
+            after = Some(members.last().unwrap().user.id.get());
+
+            // iterate over this member chunk, if any of them are linked, add them to sync list
+            for member in members {
+                let member_id = member.user.id.get();
+                if linked_ids.binary_search(&member_id).is_ok() {
+                    let req = self.make_role_sync_request_with(
+                        &member,
+                        linked_users
+                            .iter()
+                            .find(|x| x.id == member_id as i64)
+                            .unwrap(), // unwrap should be safe
+                        &linked_roles,
+                    );
+
+                    sync_data.users.push(req);
+                }
+            }
+        }
+
+        // send a mass sync request!
+        self.send_sync_roles_req(&sync_data)
+            .await
+            .map(|()| sync_data.users.len())
     }
 
     pub async fn make_role_sync_request(

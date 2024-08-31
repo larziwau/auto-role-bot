@@ -65,7 +65,7 @@ macro_rules! bail {
 
 pub use bail;
 
-pub async fn has_admin_perm(ctx: crate::Context<'_>) -> bool {
+pub async fn has_admin_perm(ctx: &crate::Context<'_>) -> bool {
     ctx.author_member()
         .await
         .unwrap()
@@ -73,7 +73,7 @@ pub async fn has_admin_perm(ctx: crate::Context<'_>) -> bool {
         .is_some_and(|p| p.administrator())
 }
 
-pub async fn has_manage_roles_perm(ctx: crate::Context<'_>) -> bool {
+pub async fn has_manage_roles_perm(ctx: &crate::Context<'_>) -> bool {
     ctx.author_member()
         .await
         .unwrap()
@@ -81,10 +81,10 @@ pub async fn has_manage_roles_perm(ctx: crate::Context<'_>) -> bool {
         .is_some_and(|p| p.manage_roles())
 }
 
-pub async fn reply_ephemeral(
-    ctx: crate::Context<'_>,
+pub async fn reply_ephemeral<'a>(
+    ctx: &'a crate::Context<'_>,
     content: impl Into<String>,
-) -> Result<poise::ReplyHandle<'_>, serenity::Error> {
+) -> Result<poise::ReplyHandle<'a>, serenity::Error> {
     ctx.send(CreateReply::default().content(content).ephemeral(true))
         .await
 }

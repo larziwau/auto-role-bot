@@ -12,7 +12,7 @@ pub async fn link(
 
     let member = ctx.author_member().await.unwrap();
 
-    match state.link_user(ctx, &member, &username).await {
+    match state.link_user(&ctx, &member, &username).await {
         Ok(user) => {
             ctx.reply(format!(
                 "✅ Linked <@{}> to GD account {} ({})!",

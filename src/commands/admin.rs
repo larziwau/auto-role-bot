@@ -2,7 +2,7 @@ use crate::state::LinkError;
 
 use super::prelude::*;
 
-#[poise::command(slash_command, subcommands("link", "unlink", "sync"))]
+#[poise::command(slash_command, subcommands("link", "unlink", "sync", "syncall"))]
 pub async fn admin(_ctx: Context<'_>) -> Result<(), CommandError> {
     // unreachable
     Ok(())
@@ -17,12 +17,12 @@ pub async fn link(
 ) -> Result<(), CommandError> {
     let state = ctx.data();
 
-    if !has_manage_roles_perm(ctx).await {
+    if !has_manage_roles_perm(&ctx).await {
         ctx.reply(":x: No permission").await?;
         return Ok(());
     }
 
-    match state.link_user(ctx, &member, &name).await {
+    match state.link_user(&ctx, &member, &name).await {
         Ok(user) => {
             ctx.reply(format!(
                 "✅ Linked {} to GD account {} ({})!",
@@ -112,7 +112,7 @@ pub async fn unlink(
 ) -> Result<(), CommandError> {
     let state = ctx.data();
 
-    if !has_manage_roles_perm(ctx).await {
+    if !has_manage_roles_perm(&ctx).await {
         ctx.reply(":x: No permission").await?;
         return Ok(());
     }
@@ -144,7 +144,7 @@ pub async fn sync(
 ) -> Result<(), CommandError> {
     let state = ctx.data();
 
-    if !has_manage_roles_perm(ctx).await {
+    if !has_manage_roles_perm(&ctx).await {
         ctx.reply(":x: No permission").await?;
         return Ok(());
     }
@@ -161,6 +161,35 @@ pub async fn sync(
         Err(e) => {
             ctx.reply(format!(":x: Error while syncing roles: {e}"))
                 .await?;
+
+            bail!("Error syncing user: {e}");
+        }
+    }
+
+    Ok(())
+}
+
+/// Sync roles of all linked users on this server
+#[poise::command(slash_command)]
+pub async fn syncall(ctx: Context<'_>) -> Result<(), CommandError> {
+    let state = ctx.data();
+
+    if !has_manage_roles_perm(&ctx).await {
+        ctx.reply(":x: No permission").await?;
+        return Ok(());
+    }
+
+    match state.sync_all_members(ctx.http()).await {
+        Ok(count) => {
+            ctx.reply(format!("✅ Successfully synced roles of {count} people!"))
+                .await?;
+        }
+
+        Err(e) => {
+            ctx.reply(format!(":x: Error while syncing members: {e}"))
+                .await?;
+
+            bail!("Error syncing all members: {e}");
         }
     }
 
