@@ -22,15 +22,28 @@ pub async fn link(
         return Ok(());
     }
 
-    ctx.defer_ephemeral().await?;
+    ctx.defer().await?;
 
     match state.link_user(&ctx, &member, &name).await {
-        Ok(user) => {
-            ctx.reply(format!(
-                "✅ Linked {} to GD account {} ({})!",
-                member.user.name, user.name, user.account_id
-            ))
-            .await?;
+        Ok((user, roles)) => {
+            if roles.is_empty() {
+                ctx.reply(format!(
+                    "✅ Linked <@{}> to GD account {} ({})!",
+                    ctx.author().id,
+                    user.name,
+                    user.account_id
+                ))
+                .await?;
+            } else {
+                ctx.reply(format!(
+                    "✅ Linked <@{}> to GD account {} ({})!\n\n* Synced roles: {}",
+                    ctx.author().id,
+                    user.name,
+                    user.account_id,
+                    roles.join(", ")
+                ))
+                .await?;
+            }
 
             Ok(())
         }
@@ -119,7 +132,7 @@ pub async fn unlink(
         return Ok(());
     }
 
-    ctx.defer_ephemeral().await?;
+    ctx.defer().await?;
 
     match state.unlink_user(user.id).await {
         Ok(()) => {
@@ -153,11 +166,15 @@ pub async fn sync(
         return Ok(());
     }
 
-    ctx.defer_ephemeral().await?;
+    ctx.defer().await?;
 
     match state.sync_roles(&user).await {
-        Ok(()) => {
-            ctx.reply(format!("✅ Successfully synced @{}'s roles! If they were already online on Globed, they might need to reconnect to the server to see the changes.", user.user.name)).await?;
+        Ok(roles) => {
+            let message =
+                format!("✅ Successfully synced @{}'s roles! If they were already online on Globed, they might need to reconnect to the server to see the changes.\n\n", user.user.name)
+                + "* Synced roles: " + &roles.join(", ");
+
+            ctx.reply(message).await?;
         }
 
         Err(RoleSyncError::NotLinked) => {

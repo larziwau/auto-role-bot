@@ -6,11 +6,15 @@ pub async fn sync(ctx: Context<'_>) -> Result<(), CommandError> {
     let state = ctx.data();
     let member = ctx.author_member().await.unwrap();
 
-    ctx.defer_ephemeral().await?;
+    ctx.defer().await?;
 
     match state.sync_roles(&member).await {
-        Ok(()) => {
-            ctx.reply("✅ Successfully synced roles! If you were already online on Globed, please reconnect to the server to see the changes.").await?;
+        Ok(roles) => {
+            let message =
+                String::from("✅ Successfully synced roles! If you were already online on Globed, please reconnect to the server to see the changes.\n\n")
+                + "* Synced roles: " + &roles.join(", ");
+
+            ctx.reply(message).await?;
         }
 
         Err(RoleSyncError::NotLinked) => {

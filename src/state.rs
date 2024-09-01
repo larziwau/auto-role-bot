@@ -206,7 +206,7 @@ impl BotState {
         ctx: &Context<'_>,
         member: &Member,
         gd_username: &str,
-    ) -> Result<UserLookupResponse, LinkError> {
+    ) -> Result<(UserLookupResponse, Vec<String>), LinkError> {
         if !gd_username.is_ascii() || gd_username.len() > 16 {
             return Err(LinkError::InvalidUsername);
         }
@@ -307,7 +307,7 @@ impl BotState {
 
         // sync roles
         match self.sync_roles(member).await {
-            Ok(()) => Ok(response),
+            Ok(roles) => Ok((response, roles)),
             Err(e) => Err(LinkError::RoleSync(e, response)),
         }
     }
@@ -433,11 +433,16 @@ impl BotState {
 
     /* Methods for syncing */
 
-    pub async fn sync_roles(&self, user: &Member) -> Result<(), RoleSyncError> {
+    // syncs roles, returns ids of roles the user received
+    pub async fn sync_roles(&self, user: &Member) -> Result<Vec<String>, RoleSyncError> {
         let req = self.make_role_sync_request(user).await?;
 
+        let retval = req.keep.clone();
+
         self.send_sync_roles_req(&RoleSyncRequestData { users: vec![req] })
-            .await
+            .await?;
+
+        Ok(retval)
     }
 
     pub async fn sync_all_members(&self, http: &serenity::Http) -> Result<usize, RoleSyncError> {

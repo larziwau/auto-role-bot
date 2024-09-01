@@ -12,17 +12,28 @@ pub async fn link(
 
     let member = ctx.author_member().await.unwrap();
 
-    ctx.defer_ephemeral().await?;
+    ctx.defer().await?;
 
     match state.link_user(&ctx, &member, &username).await {
-        Ok(user) => {
-            ctx.reply(format!(
-                "✅ Linked <@{}> to GD account {} ({})!",
-                ctx.author().id,
-                user.name,
-                user.account_id
-            ))
-            .await?;
+        Ok((user, roles)) => {
+            if roles.is_empty() {
+                ctx.reply(format!(
+                    "✅ Linked <@{}> to GD account {} ({})!",
+                    ctx.author().id,
+                    user.name,
+                    user.account_id
+                ))
+                .await?;
+            } else {
+                ctx.reply(format!(
+                    "✅ Linked <@{}> to GD account {} ({})!\n\n* Synced roles: {}",
+                    ctx.author().id,
+                    user.name,
+                    user.account_id,
+                    roles.join(", ")
+                ))
+                .await?;
+            }
 
             Ok(())
         }

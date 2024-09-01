@@ -61,7 +61,7 @@ async fn event_handler(
 
             if should_sync {
                 match state.sync_roles(new).await {
-                    Ok(()) | Err(RoleSyncError::NotLinked) => {}
+                    Ok(_) | Err(RoleSyncError::NotLinked) => {}
                     Err(err) => {
                         return Err(CommandError::other(format!(
                             "Failed to auto sync user roles: {err}"
