@@ -206,17 +206,28 @@ impl BotState {
         ctx: &Context<'_>,
         member: &Member,
         gd_username: &str,
+        link_code: Option<u32>, // if None, bypasses verification
     ) -> Result<(UserLookupResponse, Vec<String>), LinkError> {
         if !gd_username.is_ascii() || gd_username.len() > 16 {
             return Err(LinkError::InvalidUsername);
         }
 
+        let bypass_verification = link_code.is_none();
+
+        let mut url = format!(
+            "{}/gsp/lookup?username={}&link_code={}",
+            self.base_url,
+            gd_username,
+            link_code.unwrap_or(0)
+        );
+
+        if bypass_verification {
+            url += "&bypass=true";
+        }
+
         let response = match self
             .http_client
-            .get(format!(
-                "{}/gsp/lookup?username={}",
-                self.base_url, gd_username
-            ))
+            .get(url)
             .header("Authorization", &self.server_password)
             .send()
             .await

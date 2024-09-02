@@ -24,7 +24,7 @@ pub async fn link(
 
     ctx.defer().await?;
 
-    match state.link_user(&ctx, &member, &name).await {
+    match state.link_user(&ctx, &member, &name, None).await {
         Ok((user, roles)) => {
             if roles.is_empty() {
                 ctx.reply(format!(

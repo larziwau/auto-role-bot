@@ -7,6 +7,7 @@ use super::prelude::*;
 pub async fn link(
     ctx: Context<'_>,
     #[description = "GD username"] username: String,
+    #[description = "Link code, can be found in-game"] link_code: u32,
 ) -> Result<(), CommandError> {
     let state = ctx.data();
 
@@ -14,7 +15,10 @@ pub async fn link(
 
     ctx.defer().await?;
 
-    match state.link_user(&ctx, &member, &username).await {
+    match state
+        .link_user(&ctx, &member, &username, Some(link_code))
+        .await
+    {
         Ok((user, roles)) => {
             if roles.is_empty() {
                 ctx.reply(format!(
