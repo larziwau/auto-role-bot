@@ -179,14 +179,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .await?;
 
-                info!("Attempting to sync all members.. (this may take some time)");
+                let skip_sync = env::var("BOT_SKIP_SYNC_ALL")
+                    .ok()
+                    .map(|x| x != "0")
+                    .unwrap_or(false);
 
-                match state.sync_all_members(&ctx.http).await {
-                    Ok(count) => {
-                        info!("Sync finished! Total {} users synced.", count);
-                    }
-                    Err(e) => {
-                        warn!("Failed to sync roles of members: {e}");
+                if !skip_sync {
+                    info!("Attempting to sync all members.. (this may take some time)");
+
+                    match state.sync_all_members(&ctx.http).await {
+                        Ok(count) => {
+                            info!("Sync finished! Total {} users synced.", count);
+                        }
+                        Err(e) => {
+                            warn!("Failed to sync roles of members: {e}");
+                        }
                     }
                 }
 
