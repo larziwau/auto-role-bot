@@ -73,7 +73,7 @@ pub async fn link(
         }
 
         Err(LinkError::UserNotFound) => {
-            ctx.reply(":x: Failed to find the user by the given name. Make sure you are currently online on Globed and try again.").await?;
+            ctx.reply(":x: Failed to find the user by the given name. Make sure you are currently online on Globed, and that the link code is correct, and try again.").await?;
             Ok(())
         }
 
