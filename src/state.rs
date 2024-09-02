@@ -212,6 +212,10 @@ impl BotState {
             return Err(LinkError::InvalidUsername);
         }
 
+        if self.is_linked(member.user.id).await? {
+            return Err(LinkError::AlreadyLinked);
+        }
+
         let bypass_verification = link_code.is_none();
 
         let mut url = format!(
