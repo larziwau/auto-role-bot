@@ -30,7 +30,7 @@ pub async fn link(
                 .await?;
             } else {
                 ctx.reply(format!(
-                    "✅ Linked <@{}> to GD account {} ({})!\n\n* Synced roles: {}",
+                    "✅ Linked <@{}> to GD account {} ({})!\n\n* Synced roles: {}\n* Reconnect to the server to see your new roles",
                     ctx.author().id,
                     user.name,
                     user.account_id,
