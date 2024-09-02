@@ -10,7 +10,7 @@ pub async fn unlink(ctx: Context<'_>) -> Result<(), CommandError> {
 
     match state.unlink_user(member.user.id).await {
         Ok(()) => {
-            ctx.reply("Successfully unlinked the account!").await?;
+            ctx.reply("Successfully unlinked the account! If you were connected, you might have to reconnect to Globed to link again.").await?;
         }
 
         Err(RoleSyncError::NotLinked) => {
