@@ -13,7 +13,7 @@ pub async fn admin(_ctx: Context<'_>) -> Result<(), CommandError> {
 pub async fn link(
     ctx: Context<'_>,
     #[description = "User to link"] member: serenity::Member,
-    #[description = "GD username"] name: String,
+    #[description = "GD account ID"] account_id: i32,
 ) -> Result<(), CommandError> {
     let state = ctx.data();
 
@@ -24,26 +24,12 @@ pub async fn link(
 
     ctx.defer().await?;
 
-    match state.link_user(&ctx, &member, &name, None).await {
-        Ok((user, roles)) => {
-            if roles.is_empty() {
-                ctx.reply(format!(
-                    "✅ Linked <@{}> to GD account {} ({})!",
-                    ctx.author().id,
-                    user.name,
-                    user.account_id
-                ))
-                .await?;
-            } else {
-                ctx.reply(format!(
-                    "✅ Linked <@{}> to GD account {} ({})!\n\n* Synced roles: {}",
-                    ctx.author().id,
-                    user.name,
-                    user.account_id,
-                    roles.join(", ")
-                ))
-                .await?;
-            }
+    match state
+        .add_linked_user(&ctx, member.user.id, account_id)
+        .await
+    {
+        Ok(()) => {
+            ctx.reply("✅ Successfully linked this person.").await?;
 
             Ok(())
         }

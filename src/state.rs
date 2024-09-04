@@ -264,61 +264,9 @@ impl BotState {
             }
         };
 
-        let user_id_int = member.user.id.get() as i64;
-
         // insert into the db
-        match sqlx::query!(
-            "INSERT INTO linked_users (id, gd_account_id) VALUES (?, ?)",
-            user_id_int,
-            response.account_id
-        )
-        .execute(&self.database)
-        .await
-        {
-            Ok(_) => {}
-            Err(sqlx::Error::Database(err)) => {
-                // this is pretty bad but eh
-                if !err.message().contains("UNIQUE constraint failed") {
-                    return Err(LinkError::Database(sqlx::Error::Database(err)));
-                }
-
-                // check if the someone else's discord is alreday linked to this gd account
-                let linked_disc = self.get_linked_discord_account(response.account_id).await?;
-
-                // if linked to someone else than us, tell the user
-                if linked_disc.as_ref().is_some_and(|id| *id != member.user.id) {
-                    let linked_id = linked_disc.unwrap();
-
-                    // try to fetch the member and display their username, else fall back to their user id
-                    let mut ident = String::new();
-
-                    // god i fucking hate async rust
-                    {
-                        if let Some(cached) = ctx.cache().user(linked_id) {
-                            ident.push('@');
-                            ident.push_str(&cached.name);
-                        }
-                    }
-
-                    if ident.is_empty() {
-                        if let Ok(user) = ctx.http().get_user(linked_id).await {
-                            ident.push('@');
-                            ident.push_str(&user.name);
-                        } else {
-                            ident = linked_id.to_string();
-                        }
-                    };
-
-                    return Err(LinkError::LinkedToOther(ident));
-                } else {
-                    // otherwise most likely we are already linked
-                    return Err(LinkError::AlreadyLinked);
-                }
-            }
-            Err(err) => {
-                return Err(LinkError::Database(err));
-            }
-        }
+        self.add_linked_user(ctx, member.user.id, response.account_id)
+            .await?;
 
         // sync roles
         match self.sync_roles(member).await {
@@ -365,6 +313,70 @@ impl BotState {
 
         self.send_sync_roles_req(&RoleSyncRequestData { users: vec![req] })
             .await
+    }
+
+    pub async fn add_linked_user(
+        &self,
+        ctx: &Context<'_>,
+        user_id: UserId,
+        account_id: i32,
+    ) -> Result<(), LinkError> {
+        let user_id_int = user_id.get() as i64;
+
+        match sqlx::query!(
+            "INSERT INTO linked_users (id, gd_account_id) VALUES (?, ?)",
+            user_id_int,
+            account_id
+        )
+        .execute(&self.database)
+        .await
+        {
+            Ok(_) => {}
+            Err(sqlx::Error::Database(err)) => {
+                // this is pretty bad but eh
+                if !err.message().contains("UNIQUE constraint failed") {
+                    return Err(LinkError::Database(sqlx::Error::Database(err)));
+                }
+
+                // check if the someone else's discord is alreday linked to this gd account
+                let linked_disc = self.get_linked_discord_account(account_id).await?;
+
+                // if linked to someone else than us, tell the user
+                if linked_disc.as_ref().is_some_and(|id| *id != user_id) {
+                    let linked_id = linked_disc.unwrap();
+
+                    // try to fetch the member and display their username, else fall back to their user id
+                    let mut ident = String::new();
+
+                    // god i fucking hate async rust
+                    {
+                        if let Some(cached) = ctx.cache().user(linked_id) {
+                            ident.push('@');
+                            ident.push_str(&cached.name);
+                        }
+                    }
+
+                    if ident.is_empty() {
+                        if let Ok(user) = ctx.http().get_user(linked_id).await {
+                            ident.push('@');
+                            ident.push_str(&user.name);
+                        } else {
+                            ident = linked_id.to_string();
+                        }
+                    };
+
+                    return Err(LinkError::LinkedToOther(ident));
+                } else {
+                    // otherwise most likely we are already linked
+                    return Err(LinkError::AlreadyLinked);
+                }
+            }
+            Err(err) => {
+                return Err(LinkError::Database(err));
+            }
+        }
+
+        Ok(())
     }
 
     pub async fn get_all_linked_users(&self) -> Result<Vec<LinkedUser>, sqlx::Error> {
