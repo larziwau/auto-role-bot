@@ -619,6 +619,7 @@ impl BotState {
             .http_client
             .post(format!("{}/gsp/sync_roles", self.base_url))
             .header("Authorization", &self.server_password)
+            .header("Content-Type", "application/json")
             .body(body)
             .send()
             .await
